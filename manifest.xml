@@ -26,7 +26,7 @@
     <Form xsi:type="ItemEdit">
       <DesktopSettings>
         <!-- ★ ここをホスト先のURLに変更してください -->
-        <SourceLocation DefaultValue="https://YOUR_HOST_URL/taskpane.html"/>
+        <SourceLocation DefaultValue="https://takt-doi.github.io/cloudlog-addin/taskpane.html"/>
         <RequestedHeight>220</RequestedHeight>
       </DesktopSettings>
     </Form>
