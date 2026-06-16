@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>クラウドログ</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Meiryo, sans-serif;
+      font-size: 13px;
+      color: #323130;
+      background: #fff;
+    }
+
+    #search-box {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding: 8px;
+      background: #fff;
+      border-bottom: 1px solid #edebe9;
+    }
+
+    #search {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #8a8886;
+      border-radius: 2px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+    #search:focus { border-color: #0078d4; box-shadow: 0 0 0 1px #0078d4; }
+
+    #list { padding-bottom: 40px; }
+
+    .project-header {
+      padding: 6px 10px 4px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #605e5c;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      background: #f3f2f1;
+      border-top: 1px solid #edebe9;
+      user-select: none;
+    }
+
+    .tag-item {
+      padding: 9px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f3f2f1;
+      transition: background 0.08s;
+    }
+    .tag-item:hover { background: #f0f6fd; }
+    .tag-item:active { background: #deecf9; }
+    .tag-item.selected {
+      background: #deecf9;
+      border-left: 3px solid #0078d4;
+      padding-left: 9px;
+    }
+
+    .phase1 { font-size: 13px; color: #201f1e; }
+    .phase2 { font-size: 11px; color: #8a8886; margin-top: 2px; }
+
+    .no-results {
+      padding: 32px 16px;
+      text-align: center;
+      color: #8a8886;
+    }
+
+    #footer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      padding: 8px;
+      background: #fff;
+      border-top: 1px solid #edebe9;
+    }
+
+    #insert-btn {
+      width: 100%;
+      padding: 7px;
+      background: #0078d4;
+      color: #fff;
+      border: none;
+      border-radius: 2px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    #insert-btn:hover { background: #106ebe; }
+    #insert-btn:disabled { background: #c8c6c4; cursor: default; }
+
+    #toast {
+      position: fixed;
+      bottom: 52px; left: 8px; right: 8px;
+      padding: 8px 12px;
+      background: #107c10;
+      color: #fff;
+      border-radius: 2px;
+      font-size: 12px;
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<div id="search-box">
+  <input type="text" id="search" placeholder="プロジェクト・工程を検索..." autocomplete="off">
+</div>
+
+<div id="list"></div>
+
+<div id="toast">✓ コードを挿入しました</div>
+
+<div id="footer">
+  <button id="insert-btn" disabled>選択して挿入</button>
+</div>
+
+<script>
+  let tags = [];
+  let selected = null;
+  let toastTimer = null;
+
+  Office.onReady(() => {
+    fetch('tags.json')
+      .then(r => r.json())
+      .then(data => { tags = data; render(); });
+
+    document.getElementById('search').addEventListener('input', render);
+    document.getElementById('insert-btn').addEventListener('click', insertCode);
+  });
+
+  function render() {
+    const query = document.getElementById('search').value.toLowerCase();
+    const list = document.getElementById('list');
+
+    const filtered = tags.filter(t => {
+      const text = [t.project, t.phase1, t.phase2].filter(Boolean).join(' ').toLowerCase();
+      return text.includes(query);
+    });
+
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="no-results">該当なし</div>';
+      return;
+    }
+
+    const groups = {};
+    filtered.forEach(t => {
+      if (!groups[t.project]) groups[t.project] = [];
+      groups[t.project].push(t);
+    });
+
+    let html = '';
+    for (const [project, items] of Object.entries(groups)) {
+      html += `<div class="project-header">${esc(project)}</div>`;
+      items.forEach(t => {
+        const isSelected = selected && selected.code === t.code;
+        const p2 = t.phase2 && t.phase2 !== '—' ? t.phase2 : null;
+        html += `<div class="tag-item${isSelected ? ' selected' : ''}" data-code="${esc(t.code)}">
+          <div class="phase1">${esc(t.phase1 || project)}</div>
+          ${p2 ? `<div class="phase2">${esc(p2)}</div>` : ''}
+        </div>`;
+      });
+    }
+
+    list.innerHTML = html;
+
+    list.querySelectorAll('.tag-item').forEach(el => {
+      el.addEventListener('click', () => {
+        selected = { code: el.dataset.code };
+        document.getElementById('insert-btn').disabled = false;
+        render();
+      });
+    });
+  }
+
+  function insertCode() {
+    if (!selected) return;
+    const item = Office.context.mailbox.item;
+    const code = selected.code;
+
+    item.body.getAsync(Office.CoercionType.Text, result => {
+      if (result.status !== Office.AsyncResultStatus.Succeeded) return;
+      let body = result.value.replace(/@@[^@]+@@/g, '').trim();
+      body = body ? body + '\n' + code : code;
+
+      item.body.setAsync(body, { coercionType: Office.CoercionType.Text }, () => {
+        showToast();
+      });
+    });
+  }
+
+  function showToast() {
+    const el = document.getElementById('toast');
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
+  function esc(s) {
+    return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
+  }
+</script>
+
+</body>
+</html>
